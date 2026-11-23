@@ -1,11 +1,12 @@
 // src/auth.js
 // Chamadas ao Neon Auth (Managed Better Auth) usando fetch.
+import { Platform } from 'react-native';
 
 const AUTH_URL = process.env.EXPO_PUBLIC_NEON_AUTH_URL;
 
 // O Neon Auth exige o cabeçalho "Origin" nos POSTs.
-// O navegador envia sozinho; o React Native NÃO envia. Por isso enviamos aqui.
-// Qualquer origem localhost é aceita por padrão pelo Neon Auth.
+// No navegador web o próprio browser envia o Origin.
+// No React Native nativo enviamos explicitamente.
 const ORIGIN = 'http://localhost:3000';
 
 // Tradução das mensagens de erro mais comuns.
@@ -24,11 +25,23 @@ function traduzirErro(data, status) {
 }
 
 // Função base: todas as outras usam esta.
-async function request(path, { method = 'GET', body } = {}) {
+async function request(path, { method = 'GET', body, timeoutMs = 10000 } = {}) {
   if (!AUTH_URL) {
     throw new Error(
       'Variável EXPO_PUBLIC_NEON_AUTH_URL não encontrada. Confira o arquivo .env e recarregue o app.'
     );
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+
+  // No React Native nativo enviamos Origin; na Web o navegador gerencia.
+  if (Platform.OS !== 'web') {
+    headers['Origin'] = ORIGIN;
   }
 
   let resposta;
@@ -36,14 +49,17 @@ async function request(path, { method = 'GET', body } = {}) {
     resposta = await fetch(AUTH_URL + path, {
       method,
       credentials: 'include', // deixa o celular guardar o cookie de sessão
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: ORIGIN,
-      },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     });
   } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error('Tempo limite de conexão esgotado. Verifique sua conexão.');
+    }
     throw new Error('Não foi possível conectar. Verifique sua internet.');
+  } finally {
+    clearTimeout(timer);
   }
 
   const texto = await resposta.text();
@@ -86,7 +102,14 @@ export function sair() {
 }
 
 // 4) Quem está logado? Devolve { session, user } ou null.
-export async function buscarSessao() {
-  const data = await request('/get-session');
-  return data && data.user ? data : null;
+export async function buscarSessao(options = {}) {
+  try {
+    const data = await request('/get-session', {
+      timeoutMs: options.timeoutMs || 4000,
+    });
+    return data && data.user ? data : null;
+  } catch (e) {
+    // Se falhar ou der timeout ao checar sessão inicial, retorna null sem travar a interface
+    return null;
+  }
 }

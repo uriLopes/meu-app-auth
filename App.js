@@ -14,9 +14,11 @@ export default function App() {
 
   // Ao abrir o app: já existe uma sessão salva?
   useEffect(() => {
+    let montado = true;
     async function verificar() {
       try {
-        const sessao = await buscarSessao();
+        const sessao = await buscarSessao({ timeoutMs: 3500 });
+        if (!montado) return;
         if (sessao) {
           setUsuario(sessao.user);
           setTela('home');
@@ -24,10 +26,14 @@ export default function App() {
           setTela('login');
         }
       } catch (e) {
+        if (!montado) return;
         setTela('login');
       }
     }
     verificar();
+    return () => {
+      montado = false;
+    };
   }, []);
 
   function aoAutenticar(user) {
